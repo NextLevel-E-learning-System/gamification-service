@@ -1,0 +1,10 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Gamification Service API", "version": "1.0.0" },
+  "paths": {
+    "/health/live": { "get": { "summary": "Liveness", "responses": { "200": { "description": "OK" } } } },
+    "/health/ready": { "get": { "summary": "Readiness", "responses": { "200": { "description": "OK" } } } },
+    "/gamification/v1/badges": { "post": { "summary": "Criar badge", "tags": ["badges"], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["codigo", "nome", "pontos_necessarios"], "properties": { "codigo": { "type": "string" }, "nome": { "type": "string" }, "descricao": { "type": "string" }, "criterio": { "type": "string" }, "icone_url": { "type": "string", "format": "uri" }, "pontos_necessarios": { "type": "integer" } } } } } }, "responses": { "201": { "description": "Criado" }, "409": { "description": "Duplicado" } } } },
+    "/gamification/v1/badges/{codigo}": { "get": { "summary": "Obter badge", "tags": ["badges"], "parameters": [{ "name": "codigo", "in": "path", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "OK" }, "404": { "description": "Não encontrado" } } } }
+  }
+}
