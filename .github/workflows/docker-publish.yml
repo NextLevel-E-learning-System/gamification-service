@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       extra-tag:
-        description: Tag extra opcional (ex: rc, beta)
+        description: Tag extra opcional
         required: false
 
 concurrency:
