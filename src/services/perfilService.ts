@@ -5,15 +5,18 @@ import { XpAdjustedPayload } from '../events/contracts.js';
 export interface PerfilGamification {
   userId: string;
   xp: number;
-  nivel: number;
+  nivel: string;
   proximoNivelXp: number;
   badges: Array<{ codigo:string; nome:string }>;
 }
 
 function nivelFromXp(xp:number){
-  // Exemplo simples: cada nível exige 100 * n XP cumulativo (triangular * 50) => ajustável
-  let nivel = 1; let threshold = 100; let acumulado=0; while(xp >= threshold){ nivel++; acumulado += threshold; threshold = 100 * nivel; }
-  return { nivel, proximoNivelXp: acumulado + threshold };
+  // Faixas definidas: Iniciante: 0-999, Intermediário: 1000-2999, Avançado: 3000+
+  let label = 'Iniciante';
+  if(xp >= 3000) label = 'Avançado'; else if(xp >= 1000) label = 'Intermediário';
+  // Próximo nível XP
+  let proximoNivelXp = 1000; if(xp >= 1000 && xp < 3000) proximoNivelXp = 3000; else if(xp >=3000) proximoNivelXp = xp; // sem próximo definido
+  return { nivelLabel: label, proximoNivelXp };
 }
 
 export async function getOrCreatePerfil(userId:string): Promise<PerfilGamification>{
@@ -25,12 +28,12 @@ export async function getOrCreatePerfil(userId:string): Promise<PerfilGamificati
       throw new Error('usuario_nao_encontrado');
     }
     const xp = Number(func.rows[0].xp_total)||0;
-    const { nivel, proximoNivelXp } = nivelFromXp(xp);
+  const { nivelLabel, proximoNivelXp } = nivelFromXp(xp);
     const badgesRes = await c.query(`select b.codigo, b.nome
       from gamification_service.funcionario_badges fb
       join gamification_service.badges b on b.codigo=fb.badge_id
       where fb.funcionario_id=$1`,[userId]);
-    return { userId, xp, nivel, proximoNivelXp, badges: badgesRes.rows };
+  return { userId, xp, nivel: nivelLabel, proximoNivelXp, badges: badgesRes.rows };
   });
 }
 
@@ -46,8 +49,12 @@ export async function adjustXp(userId:string, delta:number, sourceEventId:string
   if((upd.rowCount ?? 0) > 0) newTotal = Number(upd.rows[0].xp_total)||0;
   });
   if(newTotal){
-    const { nivel } = nivelFromXp(newTotal);
-    const payload: XpAdjustedPayload = { userId, delta, newTotalXp: newTotal, level: nivel, sourceEventId };
+    const { nivelLabel } = nivelFromXp(newTotal);
+    // Atualiza coluna nivel se mudou
+    await withClient(async c => {
+      await c.query('update user_service.funcionarios set nivel=$2 where id=$1 and nivel<>$2',[userId, nivelLabel]);
+    });
+    const payload: XpAdjustedPayload = { userId, delta, newTotalXp: newTotal, level: nivelLabel, sourceEventId };
     await publishEvent<XpAdjustedPayload>({ type:'xp.adjusted.v1', payload });
   }
 }

@@ -13,6 +13,6 @@ export interface XpAdjustedPayload {
   userId: string;
   delta: number;
   newTotalXp: number;
-  level: number;
+  level: string; // agora label textual (Iniciante, Intermediário, Avançado)
   sourceEventId: string;
 }
