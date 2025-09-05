@@ -1,9 +1,12 @@
 import { Router } from 'express';
 import { createBadgeHandler, getBadgeHandler } from '../controllers/badgeController.js';
 import { getPerfilHandler, getRankingDepartamentoHandler, getRankingGlobalHandler } from '../controllers/perfilController.js';
+import { getConquistasHandler, reprocessBadgesHandler } from '../controllers/conquistasController.js';
 export const gamificationRouter = Router();
 gamificationRouter.post('/badges', createBadgeHandler);
 gamificationRouter.get('/badges/:codigo', getBadgeHandler);
 gamificationRouter.get('/me', getPerfilHandler);
 gamificationRouter.get('/ranking/global', getRankingGlobalHandler);
 gamificationRouter.get('/ranking/departamento', getRankingDepartamentoHandler);
+gamificationRouter.get('/conquistas', getConquistasHandler);
+gamificationRouter.post('/badges/auto/process', reprocessBadgesHandler);
