@@ -1,4 +1,6 @@
 import { withClient } from '../db.js';
+import { publishEvent } from '../events/publisher.js';
+import { XpAdjustedPayload } from '../events/contracts.js';
 
 export interface PerfilGamification {
   userId: string;
@@ -28,11 +30,22 @@ export async function getOrCreatePerfil(userId:string): Promise<PerfilGamificati
 }
 
 export async function adjustXp(userId:string, delta:number, sourceEventId:string){
+  let newTotal = 0;
   await withClient(async c => {
     await ensureTables(c);
+    // Idempotência simples: evitar duplicar delta para mesmo source_event_id
+    const exists = await c.query('select 1 from xp_events where source_event_id=$1 limit 1',[sourceEventId]);
+  if((exists.rowCount ?? 0) > 0) return; // já aplicado
     await c.query('insert into xp_events(event_id,user_id,delta,source_event_id) values(gen_random_uuid(),$1,$2,$3)',[userId, delta, sourceEventId]);
     await c.query('insert into perfis(user_id,xp) values($1,$2) on conflict (user_id) do update set xp=perfis.xp + excluded.xp',[userId, delta]);
+    const r = await c.query('select xp from perfis where user_id=$1',[userId]);
+    newTotal = r.rows[0].xp;
   });
+  if(newTotal){
+    const { nivel } = nivelFromXp(newTotal);
+    const payload: XpAdjustedPayload = { userId, delta, newTotalXp: newTotal, level: nivel, sourceEventId };
+    await publishEvent<XpAdjustedPayload>({ type:'xp.adjusted.v1', payload });
+  }
 }
 
 export async function getRankingGlobal(){
