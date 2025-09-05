@@ -16,7 +16,8 @@ export async function startConsumer(){
       channel = await conn.createChannel();
       await channel.assertExchange(EXCHANGE,'topic',{ durable:true });
       const q = await channel.assertQueue('gamification.events', { durable:true });
-      await channel.bindQueue(q.queue, EXCHANGE, 'course.*.completed.*'); // pattern simplificado
+  await channel.bindQueue(q.queue, EXCHANGE, 'course.*.completed.*'); // pattern simplificado
+  await channel.bindQueue(q.queue, EXCHANGE, 'assessment/passed/v1');
       await channel.consume(q.queue, async msg => {
         if(!msg) return;
         try {
@@ -41,6 +42,7 @@ export async function startConsumer(){
 interface DomainEvent<T = unknown>{ eventId:string; type:string; occurredAt:string; payload:T }
 interface ModuleCompletedPayload { enrollmentId:string; courseId:string; userId:string; moduleId:string; progressPercent:number; completedCourse:boolean }
 interface CourseCompletedPayload { enrollmentId:string; courseId:string; userId:string; totalProgress:number }
+interface AssessmentPassedPayload { assessmentCode:string; courseId:string; userId:string; score:number; passed:boolean }
 
 async function persistEvent(evt:DomainEvent){
   await withClient(c => c.query('insert into events_store(event_id,type,occurred_at,payload) values($1,$2,$3,$4) on conflict do nothing', [evt.eventId, evt.type, evt.occurredAt, evt.payload]));
@@ -53,6 +55,9 @@ async function handleEvent(evt:DomainEvent){
       break;
     case 'course.completed.v1':
       await onCourseCompleted(evt as DomainEvent<CourseCompletedPayload>);
+      break;
+    case 'assessment.passed.v1':
+      await onAssessmentPassed(evt as DomainEvent<AssessmentPassedPayload>);
       break;
     default:
       break;
@@ -71,6 +76,17 @@ async function onCourseCompleted(evt:DomainEvent<CourseCompletedPayload>){
   const { userId } = evt.payload;
   // Sem XP extra (já adicionado no último módulo). Avaliar badges.
   await avaliarBadges(userId, evt.eventId);
+}
+
+async function onAssessmentPassed(evt:DomainEvent<AssessmentPassedPayload>){
+  const { userId, score } = evt.payload;
+  await adjustXp(userId, Math.round(score), evt.eventId);
+  await withClient(async c => {
+    const aprov = await c.query('select count(*)::int as total from avaliacoes_submissoes where funcionario_id=$1 and aprovado=true',[userId]);
+    if((aprov.rows[0].total as number) === 1){
+      await atribuirBadge(c, userId, 'PRIMEIRA_APROVACAO', evt.eventId);
+    }
+  });
 }
 
 async function avaliarBadges(userId:string, sourceEventId:string){
