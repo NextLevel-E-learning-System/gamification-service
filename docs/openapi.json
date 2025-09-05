@@ -3,10 +3,15 @@
   "info": { "title": "Gamification Service API", "version": "1.0.0" },
   "paths": {
     "/gamification/v1/badges": {
+      "get": {
+        "summary": "Listar badges",
+        "tags": ["badges"],
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Badge" } } } } } }
+      },
       "post": {
         "summary": "Criar badge",
         "tags": ["badges"],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["codigo", "nome", "pontos_necessarios"], "properties": { "codigo": { "type": "string" }, "nome": { "type": "string" }, "descricao": { "type": "string" }, "criterio": { "type": "string" }, "icone_url": { "type": "string", "format": "uri" }, "pontos_necessarios": { "type": "integer" } } } } } },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewBadge" } } } },
         "responses": { "201": { "description": "Criado" }, "409": { "description": "Duplicado" } }
       }
     },
@@ -47,6 +52,45 @@
     },
     "/gamification/v1/ranking/departamento": {
       "get": { "summary": "Ranking por departamento (mock header X-Departamento-Id)", "tags": ["ranking"], "parameters": [{ "name": "X-Departamento-Id", "in": "header", "required": true, "schema": { "type": "string" } }], "responses": { "200": { "description": "OK" } } }
+    },
+    "/gamification/v1/ranking/monthly": {
+      "get": {
+        "summary": "Ranking mensal (global ou departamento)",
+        "tags": ["ranking"],
+        "parameters": [
+          { "name": "mes", "in": "query", "required": false, "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}$" }, "description": "Filtro mês (YYYY-MM). Default mês atual" },
+          { "name": "departamento", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Filtra por departamento" }
+        ],
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/RankingEntry" } } } } } }
+      }
+    },
+    "/gamification/v1/users/{id}/badges": {
+      "get": {
+        "summary": "Badges de um usuário",
+        "tags": ["badges"],
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } } ],
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Badge" } } } } } }
+      }
+    },
+    "/gamification/v1/users/{id}/xp-history": {
+      "get": {
+        "summary": "Histórico de XP (recente)",
+        "tags": ["xp"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100 }, "required": false },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "required": false }
+        ],
+        "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/XpHistoryItem" } }, "nextCursor": { "type": ["string", "null"] } } } } } } }
+      }
+    }
+  }
+  ,"components": {
+    "schemas": {
+      "Badge": { "type": "object", "properties": { "codigo": { "type": "string" }, "nome": { "type": "string" }, "descricao": { "type": "string" }, "criterio": { "type": "string" }, "icone_url": { "type": "string" }, "pontos_necessarios": { "type": "integer" } }, "required": ["codigo", "nome"] },
+      "NewBadge": { "allOf": [ { "$ref": "#/components/schemas/Badge" } ] },
+      "RankingEntry": { "type": "object", "properties": { "posicao": { "type": "integer" }, "userId": { "type": "string" }, "xpMes": { "type": "integer" } }, "required": ["posicao", "userId", "xpMes"] },
+      "XpHistoryItem": { "type": "object", "properties": { "id": { "type": "string" }, "xp_ganho": { "type": "integer" }, "motivo": { "type": "string" }, "referencia_id": { "type": ["string", "null"] } }, "required": ["id", "xp_ganho", "motivo"] }
     }
   }
 }
