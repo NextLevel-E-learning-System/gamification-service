@@ -3,28 +3,39 @@ import { withClient } from '../db.js';
 import { adjustXp } from '../services/perfilService.js';
 import { logger } from '../config/logger.js';
 
-const EXCHANGE = process.env.RABBIT_EXCHANGE || 'domain.events';
+const EXCHANGE = 'domain.events';
 let channel: Channel | null = null;
 
 export async function startConsumer(){
   const url = process.env.RABBITMQ_URL;
   if(!url){ logger.warn('RABBITMQ_URL not set, consumer disabled'); return; }
-  const conn = await connect(url);
-  channel = await conn.createChannel();
-  await channel.assertExchange(EXCHANGE,'topic',{ durable:true });
-  const q = await channel.assertQueue('gamification.events', { durable:true });
-  await channel.bindQueue(q.queue, EXCHANGE, 'course.*.completed.*'); // pattern simplificado
-  await channel.consume(q.queue, async msg => {
-    if(!msg) return;
+  const maxAttempts=10; const baseDelay=500;
+  for(let attempt=1; attempt<=maxAttempts; attempt++){
     try {
-      const content = msg.content.toString();
-      const evt = JSON.parse(content) as DomainEvent;
-      await persistEvent(evt);
-      await handleEvent(evt);
-      channel?.ack(msg);
-    } catch(err){ logger.error({ err }, 'error_processing_event'); channel?.nack(msg,false,false); }
-  });
-  logger.info('gamification consumer started');
+      const conn = await connect(url);
+      channel = await conn.createChannel();
+      await channel.assertExchange(EXCHANGE,'topic',{ durable:true });
+      const q = await channel.assertQueue('gamification.events', { durable:true });
+      await channel.bindQueue(q.queue, EXCHANGE, 'course.*.completed.*'); // pattern simplificado
+      await channel.consume(q.queue, async msg => {
+        if(!msg) return;
+        try {
+          const content = msg.content.toString();
+          const evt = JSON.parse(content) as DomainEvent;
+          await persistEvent(evt);
+          await handleEvent(evt);
+          channel?.ack(msg);
+        } catch(err){ logger.error({ err }, 'error_processing_event'); channel?.nack(msg,false,false); }
+      });
+      logger.info('gamification consumer started');
+      return;
+    } catch(err){
+      const delay = baseDelay * attempt;
+      logger.warn({ attempt, delay, err }, 'consumer_connect_retry');
+      await new Promise(r=>setTimeout(r, delay));
+    }
+  }
+  logger.error('failed_to_start_consumer');
 }
 
 interface DomainEvent<T = unknown>{ eventId:string; type:string; occurredAt:string; payload:T }

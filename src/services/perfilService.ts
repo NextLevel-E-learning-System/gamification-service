@@ -18,28 +18,32 @@ function nivelFromXp(xp:number){
 
 export async function getOrCreatePerfil(userId:string): Promise<PerfilGamification>{
   return withClient(async c => {
-    await ensureTables(c);
-    const perfil = await c.query('select user_id, xp from perfis where user_id=$1',[userId]);
-    if(perfil.rowCount===0){ await c.query('insert into perfis(user_id,xp) values($1,0)',[userId]); }
-    const { rows } = await c.query('select user_id, xp from perfis where user_id=$1',[userId]);
-    const xp = rows[0].xp as number;
+    // Usa tabela existente user_service.funcionarios
+    const func = await c.query('select id as user_id, xp_total from user_service.funcionarios where id=$1',[userId]);
+    if(func.rowCount===0){
+      // Em vez de criar, retorna erro explícito
+      throw new Error('usuario_nao_encontrado');
+    }
+    const xp = Number(func.rows[0].xp_total)||0;
     const { nivel, proximoNivelXp } = nivelFromXp(xp);
-    const badgesRes = await c.query('select b.codigo, b.nome from user_badges ub join badges b on b.codigo=ub.badge_codigo where ub.user_id=$1',[userId]);
+    const badgesRes = await c.query(`select b.codigo, b.nome
+      from gamification_service.funcionario_badges fb
+      join gamification_service.badges b on b.codigo=fb.badge_id
+      where fb.funcionario_id=$1`,[userId]);
     return { userId, xp, nivel, proximoNivelXp, badges: badgesRes.rows };
   });
 }
 
 export async function adjustXp(userId:string, delta:number, sourceEventId:string){
+  if(delta === 0) return; // ignorar neutros aqui (já contabilizado em módulo final)
   let newTotal = 0;
   await withClient(async c => {
-    await ensureTables(c);
-    // Idempotência simples: evitar duplicar delta para mesmo source_event_id
-    const exists = await c.query('select 1 from xp_events where source_event_id=$1 limit 1',[sourceEventId]);
-  if((exists.rowCount ?? 0) > 0) return; // já aplicado
-    await c.query('insert into xp_events(event_id,user_id,delta,source_event_id) values(gen_random_uuid(),$1,$2,$3)',[userId, delta, sourceEventId]);
-    await c.query('insert into perfis(user_id,xp) values($1,$2) on conflict (user_id) do update set xp=perfis.xp + excluded.xp',[userId, delta]);
-    const r = await c.query('select xp from perfis where user_id=$1',[userId]);
-    newTotal = r.rows[0].xp;
+    // Idempotência via historico_xp.referencia_id
+    const exists = await c.query('select 1 from gamification_service.historico_xp where referencia_id=$1 limit 1',[sourceEventId]);
+    if((exists.rowCount ?? 0) > 0) return;
+    await c.query('insert into gamification_service.historico_xp(id, funcionario_id, xp_ganho, motivo, referencia_id) values(gen_random_uuid(), $1, $2, $3, $4)',[userId, delta, 'event', sourceEventId]);
+    const upd = await c.query('update user_service.funcionarios set xp_total = coalesce(xp_total,0) + $2 where id=$1 returning xp_total',[userId, delta]);
+  if((upd.rowCount ?? 0) > 0) newTotal = Number(upd.rows[0].xp_total)||0;
   });
   if(newTotal){
     const { nivel } = nivelFromXp(newTotal);
@@ -49,45 +53,11 @@ export async function adjustXp(userId:string, delta:number, sourceEventId:string
 }
 
 export async function getRankingGlobal(){
-  return withClient(async c => { await ensureTables(c); const { rows } = await c.query('select user_id, xp from perfis order by xp desc limit 50'); return rows; });
+  return withClient(async c => { const { rows } = await c.query('select id as user_id, xp_total as xp from user_service.funcionarios order by xp_total desc nulls last limit 50'); return rows; });
 }
 
 export async function getRankingDepartamento(_departamentoId:string){
   // Placeholder: sem relação real departamento <-> user, retornando global temporariamente
   return getRankingGlobal();
 }
-
-import type { PoolClient } from 'pg';
-async function ensureTables(c:PoolClient){
-  await c.query(`create table if not exists perfis (
-    user_id uuid primary key,
-    xp int not null default 0
-  )`);
-  await c.query(`create table if not exists xp_events (
-    event_id uuid primary key,
-    user_id uuid not null,
-    delta int not null,
-    source_event_id uuid not null,
-    created_at timestamptz not null default now()
-  )`);
-  await c.query(`create table if not exists events_store (
-    event_id uuid primary key,
-    type text not null,
-    occurred_at timestamptz not null,
-    payload jsonb not null
-  )`);
-  await c.query(`create table if not exists user_badges (
-    user_id uuid not null,
-    badge_codigo text not null,
-    earned_at timestamptz not null default now(),
-    primary key(user_id,badge_codigo)
-  )`);
-  await c.query(`create table if not exists badges (
-    codigo text primary key,
-    nome text not null,
-    descricao text,
-    criterio text,
-    icone_url text,
-    pontos_necessarios int not null default 0
-  )`);
-}
+ 

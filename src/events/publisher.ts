@@ -6,7 +6,7 @@ import { DomainEvent } from './contracts.js';
 interface SimpleConnection { createChannel: () => Promise<Channel>; close?: () => Promise<void>; }
 let connection: SimpleConnection | null = null;
 let channel: Channel | null = null;
-const EXCHANGE = process.env.RABBIT_EXCHANGE || 'domain.events';
+const EXCHANGE = 'domain.events';
 
 export async function initEventBus(){
   if(channel) return channel;

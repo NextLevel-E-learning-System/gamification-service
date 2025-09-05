@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { getOrCreatePerfil, getRankingDepartamento, getRankingGlobal } from '../services/perfilService';
+import { getOrCreatePerfil, getRankingDepartamento, getRankingGlobal } from '../services/perfilService.js';
 
 export async function getPerfilHandler(req:Request,res:Response,next:NextFunction){
   try {
