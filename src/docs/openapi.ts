@@ -1,4 +1,4 @@
-{
+export const openapiSpec = {
   "openapi": "3.0.3",
   "info": { "title": "Gamification Service API", "version": "1.0.0" },
   "paths": {
@@ -84,8 +84,8 @@
         "responses": { "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/XpHistoryItem" } }, "nextCursor": { "type": ["string", "null"] } } } } } } }
       }
     }
-  }
-  ,"components": {
+  },
+  "components": {
     "schemas": {
       "Badge": { "type": "object", "properties": { "codigo": { "type": "string" }, "nome": { "type": "string" }, "descricao": { "type": "string" }, "criterio": { "type": "string" }, "icone_url": { "type": "string" }, "pontos_necessarios": { "type": "integer" } }, "required": ["codigo", "nome"] },
       "NewBadge": { "allOf": [ { "$ref": "#/components/schemas/Badge" } ] },
@@ -93,4 +93,4 @@
       "XpHistoryItem": { "type": "object", "properties": { "id": { "type": "string" }, "xp_ganho": { "type": "integer" }, "motivo": { "type": "string" }, "referencia_id": { "type": ["string", "null"] } }, "required": ["id", "xp_ganho", "motivo"] }
     }
   }
-}
+} as const;

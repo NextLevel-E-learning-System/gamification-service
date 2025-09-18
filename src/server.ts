@@ -10,8 +10,14 @@ export function createServer(){
 	app.use(express.json());
 	app.use(cors({origin:'*'}));
 	app.use((req,_res,next)=>{ (req as any).log=logger; next();});
-	const spec=loadOpenApi('Gamification Service API');
-	app.get('/openapi.json', (_req,res)=>res.json(spec));
+	app.get('/openapi.json', async (_req,res)=>{
+		try {
+			const spec = await loadOpenApi('Gamification Service API');
+			res.json(spec);
+		} catch (error) {
+			res.status(500).json({ error: 'Failed to load OpenAPI spec' });
+		}
+	});
 	app.use('/gamification/v1', gamificationRouter);
 	app.use(errorHandler);
 	return app;
