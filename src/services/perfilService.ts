@@ -89,13 +89,12 @@ export async function getRankingGlobal(){
   return withClient(async c => { 
     const { rows } = await c.query(`
       SELECT 
-        id as user_id, 
+        funcionario_id as user_id,
         nome,
         xp_total as xp,
-        posicao_ranking_geral as posicao
-      FROM user_service.funcionarios 
-      WHERE ativo = true
-      ORDER BY xp_total DESC NULLS LAST, criado_em ASC
+        posicao_geral as posicao
+      FROM gamification_service.ranking
+      ORDER BY posicao_geral ASC
       LIMIT 50
     `); 
     return rows; 
@@ -106,13 +105,13 @@ export async function getRankingDepartamento(departamentoId:string){
   return withClient(async c => { 
     const { rows } = await c.query(`
       SELECT 
-        id as user_id, 
+        funcionario_id as user_id,
         nome,
         xp_total as xp,
-        posicao_ranking_geral as posicao
-      FROM user_service.funcionarios 
-      WHERE ativo = true AND departamento_id = $1
-      ORDER BY xp_total DESC NULLS LAST, criado_em ASC
+        posicao_geral as posicao
+      FROM gamification_service.ranking
+      WHERE departamento_id = $1
+      ORDER BY posicao_geral ASC
       LIMIT 50
     `, [departamentoId]); 
     return rows; 

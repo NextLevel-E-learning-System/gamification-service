@@ -1,49 +1,77 @@
 import { withClient } from '../db.js';
 
 export async function rankingMensal(mes?:string, departamentoId?:string){
-  // mes formato YYYY-MM; se omitido usa mês atual
+  // mes formato YYYY-MM; se omitido usa mês atual (do próprio ranking já calculado)
   return withClient(async c => {
-    const monthExpr = mes ? `${mes}-01` : undefined;
-    const params:unknown[] = [];
     let where = '1=1';
-    if(monthExpr){ 
-      params.push(monthExpr); 
-      where += ` and date_trunc('month', hx.data_hora) = date_trunc('month', $${params.length}::date)`; 
-    } else { 
-      where += ' and date_trunc(\'month\', hx.data_hora) = date_trunc(\'month\', now())'; 
-    }
-    if(departamentoId){ 
-      params.push(departamentoId); 
-      where += ` and f.departamento_id = $${params.length}`; 
+    const params: unknown[] = [];
+    
+    if (departamentoId) {
+      params.push(departamentoId);
+      where += ` AND departamento_id = $${params.length}`;
     }
     
-    const sql = `
-      SELECT 
-        f.id as user_id,
-        f.nome,
-        f.posicao_ranking_mensal as posicao,
-        COALESCE(SUM(CASE WHEN hx.xp_ganho > 0 THEN hx.xp_ganho ELSE 0 END), 0) as xp_mes
-      FROM user_service.funcionarios f
-      LEFT JOIN gamification_service.historico_xp hx ON hx.funcionario_id = f.id
-      WHERE ${where} AND f.ativo = true
-      GROUP BY f.id, f.nome, f.posicao_ranking_mensal
-      ORDER BY xp_mes DESC, f.criado_em ASC
-      LIMIT 50
-    `;
-    
-    const r = await c.query(sql, params);
-    return r.rows.map((row, idx)=> ({ 
-      posicao: row.posicao || (idx + 1),
-      userId: row.user_id, 
-      nome: row.nome,
-      xpMes: Number(row.xp_mes) 
-    }));
+    // Se mes foi especificado, precisamos recalcular para aquele mês
+    // Senão, usa o ranking já calculado (mês atual)
+    if (mes) {
+      const monthExpr = `${mes}-01`;
+      params.push(monthExpr);
+      
+      const sql = `
+        WITH xp_mensal AS (
+          SELECT 
+            hx.funcionario_id,
+            COALESCE(SUM(CASE WHEN hx.xp_ganho > 0 THEN hx.xp_ganho ELSE 0 END), 0) as xp_mes
+          FROM gamification_service.historico_xp hx
+          WHERE DATE_TRUNC('month', hx.data_hora) = DATE_TRUNC('month', $${params.length}::date)
+          GROUP BY hx.funcionario_id
+        ),
+        ranking_calculado AS (
+          SELECT 
+            r.funcionario_id,
+            r.nome,
+            COALESCE(xm.xp_mes, 0) as xp_mes,
+            r.departamento_id,
+            ROW_NUMBER() OVER (ORDER BY COALESCE(xm.xp_mes, 0) DESC, r.nome ASC) as posicao
+          FROM gamification_service.ranking r
+          LEFT JOIN xp_mensal xm ON xm.funcionario_id = r.funcionario_id
+          WHERE ${where}
+        )
+        SELECT 
+          posicao,
+          funcionario_id as "userId",
+          nome,
+          xp_mes as "xpMes"
+        FROM ranking_calculado
+        ORDER BY posicao ASC
+        LIMIT 50
+      `;
+      
+      const r = await c.query(sql, params);
+      return r.rows;
+    } else {
+      // Usa o ranking mensal já calculado
+      const sql = `
+        SELECT 
+          posicao_mensal as posicao,
+          funcionario_id as "userId",
+          nome,
+          xp_mes as "xpMes"
+        FROM gamification_service.ranking
+        WHERE ${where}
+        ORDER BY posicao_mensal ASC
+        LIMIT 50
+      `;
+      
+      const r = await c.query(sql, params);
+      return r.rows;
+    }
   });
 }
 
 export async function xpHistory(userId:string, limit=50, cursor?:string){
   return withClient(async c => {
-  const params:unknown[] = [userId];
+    const params:unknown[] = [userId];
     let where = 'funcionario_id=$1';
     if(cursor){ params.push(cursor); where += ` and id < $${params.length}`; }
     const sql = `select id, xp_ganho, motivo, referencia_id from gamification_service.historico_xp
