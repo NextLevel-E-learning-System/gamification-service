@@ -86,11 +86,36 @@ export async function adjustXp(userId: string, delta: number, sourceEventId: str
 }
 
 export async function getRankingGlobal(){
-  return withClient(async c => { const { rows } = await c.query('select id as user_id, xp_total as xp from user_service.funcionarios order by xp_total desc nulls last limit 50'); return rows; });
+  return withClient(async c => { 
+    const { rows } = await c.query(`
+      SELECT 
+        id as user_id, 
+        nome,
+        xp_total as xp,
+        posicao_ranking_geral as posicao
+      FROM user_service.funcionarios 
+      WHERE ativo = true
+      ORDER BY xp_total DESC NULLS LAST, criado_em ASC
+      LIMIT 50
+    `); 
+    return rows; 
+  });
 }
 
-export async function getRankingDepartamento(_departamentoId:string){
-  // Placeholder: sem relação real departamento <-> user, retornando global temporariamente
-  return getRankingGlobal();
+export async function getRankingDepartamento(departamentoId:string){
+  return withClient(async c => { 
+    const { rows } = await c.query(`
+      SELECT 
+        id as user_id, 
+        nome,
+        xp_total as xp,
+        posicao_ranking_geral as posicao
+      FROM user_service.funcionarios 
+      WHERE ativo = true AND departamento_id = $1
+      ORDER BY xp_total DESC NULLS LAST, criado_em ASC
+      LIMIT 50
+    `, [departamentoId]); 
+    return rows; 
+  });
 }
  
