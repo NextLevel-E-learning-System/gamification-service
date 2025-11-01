@@ -2,125 +2,253 @@ import { connect, Channel } from 'amqplib';
 import { adjustXp } from '../services/perfilService.js';
 import { withClient } from '../db.js';
 import { logger } from '../config/logger.js';
+import type { PoolClient } from 'pg';
 
 const EXCHANGE = 'domain.events';
 let channel: Channel | null = null;
 
-export async function startConsumer(){
+export async function startConsumer() {
   const url = process.env.RABBITMQ_URL;
-  if(!url){ logger.warn('RABBITMQ_URL not set, consumer disabled'); return; }
-  const maxAttempts=10; const baseDelay=500;
-  for(let attempt=1; attempt<=maxAttempts; attempt++){
+  if (!url) {
+    logger.warn('RABBITMQ_URL not set, consumer disabled');
+    return;
+  }
+
+  const maxAttempts = 10;
+  const baseDelay = 500;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const conn = await connect(url);
       channel = await conn.createChannel();
-      await channel.assertExchange(EXCHANGE,'topic',{ durable:true });
-      const q = await channel.assertQueue('gamification.events', { durable:true });
-  await channel.bindQueue(q.queue, EXCHANGE, 'course.*.completed.*'); // pattern simplificado
-  await channel.bindQueue(q.queue, EXCHANGE, 'assessment/passed/v1');
-      await channel.consume(q.queue, async msg => {
-        if(!msg) return;
+      await channel.assertExchange(EXCHANGE, 'topic', { durable: true });
+
+      const q = await channel.assertQueue('gamification.events', { durable: true });
+
+      // Subscrever aos eventos relevantes
+      await channel.bindQueue(q.queue, EXCHANGE, 'progress.module.completed.v1');
+      await channel.bindQueue(q.queue, EXCHANGE, 'progress.course.completed.v1');
+      await channel.bindQueue(q.queue, EXCHANGE, 'assessment.passed.v1');
+
+      await channel.consume(q.queue, async (msg) => {
+        if (!msg) return;
+
         try {
           const content = msg.content.toString();
           const evt = JSON.parse(content) as DomainEvent;
-          await persistEvent(evt);
+          
+          logger.info({ eventId: evt.eventId, type: evt.type }, 'processing_event');
+          
           await handleEvent(evt);
           channel?.ack(msg);
-        } catch(err){ logger.error({ err }, 'error_processing_event'); channel?.nack(msg,false,false); }
+        } catch (err) {
+          logger.error({ err }, 'error_processing_event');
+          channel?.nack(msg, false, false);
+        }
       });
+
       logger.info('gamification consumer started');
       return;
-    } catch(err){
+    } catch (err) {
       const delay = baseDelay * attempt;
       logger.warn({ attempt, delay, err }, 'consumer_connect_retry');
-      await new Promise(r=>setTimeout(r, delay));
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
+
   logger.error('failed_to_start_consumer');
 }
 
-interface DomainEvent<T = unknown>{ eventId:string; type:string; occurredAt:string; payload:T }
-interface ModuleCompletedPayload { enrollmentId:string; courseId:string; userId:string; moduleId:string; progressPercent:number; completedCourse:boolean }
-interface CourseCompletedPayload { enrollmentId:string; courseId:string; userId:string; totalProgress:number }
-interface AssessmentPassedPayload { assessmentCode:string; courseId:string; userId:string; score:number; passed:boolean }
-
-async function persistEvent(evt:DomainEvent){
-  await withClient(c => c.query('insert into events_store(event_id,type,occurred_at,payload) values($1,$2,$3,$4) on conflict do nothing', [evt.eventId, evt.type, evt.occurredAt, evt.payload]));
+// ========== TIPOS DE EVENTOS ==========
+interface DomainEvent<T = unknown> {
+  eventId: string;
+  type: string;
+  occurredAt: string;
+  payload: T;
 }
 
-async function handleEvent(evt:DomainEvent){
-  switch(evt.type){
-    case 'course.module.completed.v1':
+interface ModuleCompletedPayload {
+  enrollmentId: string;
+  courseId: string;
+  userId: string;
+  moduleId: string;
+  xpEarned: number;
+  progressPercent: number;
+}
+
+interface CourseCompletedPayload {
+  enrollmentId: string;
+  courseId: string;
+  userId: string;
+  totalXp: number;
+}
+
+interface AssessmentPassedPayload {
+  assessmentCode: string;
+  courseId: string;
+  userId: string;
+  score: number;
+  passed: boolean;
+}
+
+// ========== HANDLER DE EVENTOS ==========
+async function handleEvent(evt: DomainEvent) {
+  switch (evt.type) {
+    case 'progress.module.completed.v1':
       await onModuleCompleted(evt as DomainEvent<ModuleCompletedPayload>);
       break;
-    case 'course.completed.v1':
+    case 'progress.course.completed.v1':
       await onCourseCompleted(evt as DomainEvent<CourseCompletedPayload>);
       break;
     case 'assessment.passed.v1':
       await onAssessmentPassed(evt as DomainEvent<AssessmentPassedPayload>);
       break;
     default:
+      logger.debug({ type: evt.type }, 'event_type_ignored');
       break;
   }
 }
 
-async function onModuleCompleted(evt:DomainEvent<ModuleCompletedPayload>){
-  const { userId } = evt.payload;
-  // Regra simples: cada módulo concluído concede 50 XP; bônus 100 XP se curso concluído sinalizado no evento
-  let delta = 50;
-  if(evt.payload.completedCourse) delta += 100;
-  await adjustXp(userId, delta, evt.eventId);
+// ========== MÓDULO CONCLUÍDO ==========
+async function onModuleCompleted(evt: DomainEvent<ModuleCompletedPayload>) {
+  const { userId, xpEarned, moduleId } = evt.payload;
+  
+  logger.info(
+    { userId, moduleId, xpEarned },
+    'module_completed_processing_xp'
+  );
+
+  // Registra XP do módulo
+  if (xpEarned > 0) {
+    await adjustXp(userId, xpEarned, evt.eventId, `modulo:${moduleId}`);
+  }
 }
 
-async function onCourseCompleted(evt:DomainEvent<CourseCompletedPayload>){
-  const { userId } = evt.payload;
-  // Sem XP extra (já adicionado no último módulo). Avaliar badges.
-  await avaliarBadges(userId, evt.eventId);
+// ========== CURSO CONCLUÍDO ==========
+async function onCourseCompleted(evt: DomainEvent<CourseCompletedPayload>) {
+  const { userId, courseId } = evt.payload;
+
+  logger.info({ userId, courseId }, 'course_completed_evaluating_badges');
+
+  // Avaliar conquistas de badges
+  await avaliarBadges(userId, courseId, evt.eventId);
 }
 
-async function onAssessmentPassed(evt:DomainEvent<AssessmentPassedPayload>){
-  const { userId, score } = evt.payload;
-  await adjustXp(userId, Math.round(score), evt.eventId);
-  await withClient(async c => {
-    const aprov = await c.query('select count(*)::int as total from avaliacoes_submissoes where funcionario_id=$1 and aprovado=true',[userId]);
-    if((aprov.rows[0].total as number) === 1){
+// ========== AVALIAÇÃO APROVADA ==========
+async function onAssessmentPassed(evt: DomainEvent<AssessmentPassedPayload>) {
+  const { userId, score, assessmentCode } = evt.payload;
+
+  logger.info({ userId, assessmentCode, score }, 'assessment_passed_processing_xp');
+
+  // Registra XP da avaliação
+  const xpBonus = Math.round(score * 0.5); // 50% da nota como XP bônus
+  if (xpBonus > 0) {
+    await adjustXp(userId, xpBonus, evt.eventId, `avaliacao:${assessmentCode}`);
+  }
+
+  // Verificar badge de primeira aprovação
+  await withClient(async (c) => {
+    const aprovacoes = await c.query(
+      `SELECT COUNT(*)::int as total 
+       FROM assessment_service.tentativas 
+       WHERE funcionario_id = $1 AND status = 'CONCLUIDO' AND nota_obtida >= (
+         SELECT nota_minima FROM assessment_service.avaliacoes WHERE codigo = avaliacao_id LIMIT 1
+       )`,
+      [userId]
+    );
+
+    if ((aprovacoes.rows[0]?.total as number) === 1) {
       await atribuirBadge(c, userId, 'PRIMEIRA_APROVACAO', evt.eventId);
     }
   });
 }
 
-async function avaliarBadges(userId:string, sourceEventId:string){
-  await withClient(async c => {
-    // Primeiro Curso: se total de cursos concluídos =1 atribuir badge PRIMEIRO_CURSO
-    const concl = await c.query(`select count(*)::int as total from progress_service.inscricoes where funcionario_id=$1 and status='CONCLUIDO'`,[userId]);
-    const total = concl.rows[0].total as number;
-    if(total===1){
+// ========== AVALIAR BADGES AUTOMÁTICOS ==========
+async function avaliarBadges(userId: string, courseId: string, sourceEventId: string) {
+  await withClient(async (c) => {
+    // Badge: PRIMEIRO_CURSO
+    const cursosCompletos = await c.query(
+      `SELECT COUNT(*)::int as total 
+       FROM progress_service.inscricoes 
+       WHERE funcionario_id = $1 AND status = 'CONCLUIDO'`,
+      [userId]
+    );
+
+    if ((cursosCompletos.rows[0]?.total as number) === 1) {
       await atribuirBadge(c, userId, 'PRIMEIRO_CURSO', sourceEventId);
     }
-    // Maratonista: 5 cursos no mês atual
-    const maratona = await c.query(`select count(*)::int as cnt from progress_service.inscricoes 
-      where funcionario_id=$1 and status='CONCLUIDO' and date_trunc('month', data_conclusao)=date_trunc('month', now())`,[userId]);
-    if((maratona.rows[0].cnt as number) === 5){
+
+    // Badge: MARATONISTA (5 cursos no mês atual)
+    const cursosNoMes = await c.query(
+      `SELECT COUNT(*)::int as total 
+       FROM progress_service.inscricoes 
+       WHERE funcionario_id = $1 
+         AND status = 'CONCLUIDO' 
+         AND date_trunc('month', data_conclusao) = date_trunc('month', now())`,
+      [userId]
+    );
+
+    if ((cursosNoMes.rows[0]?.total as number) === 5) {
       await atribuirBadge(c, userId, 'MARATONISTA', sourceEventId);
     }
-    // EXPERT: XP total >= 3000
-    const xpRes = await c.query('select xp_total from user_service.funcionarios where id=$1',[userId]);
-    const xp = Number(xpRes.rows[0]?.xp_total)||0;
-    if(xp >= 3000){
+
+    // Badge: EXPERT (XP total >= 3000)
+    const xpTotal = await c.query(
+      'SELECT xp_total FROM user_service.funcionarios WHERE id = $1',
+      [userId]
+    );
+
+    const xp = Number(xpTotal.rows[0]?.xp_total) || 0;
+    if (xp >= 3000) {
       await atribuirBadge(c, userId, 'EXPERT', sourceEventId);
     }
+
+    logger.info({ userId, courseId, cursosCompletos: cursosCompletos.rows[0]?.total }, 'badges_evaluated');
   });
 }
 
-import type { PoolClient } from 'pg';
-async function atribuirBadge(c:PoolClient, userId:string, codigo:string, sourceEventId:string){
-  // Garantir existência do badge base (idempotente)
-  await c.query(`insert into gamification_service.badges(codigo,nome,descricao) values($1,$1,$1)
-    on conflict (codigo) do nothing`,[codigo]);
-  // Verifica se já possui
-  const has = await c.query('select 1 from gamification_service.funcionario_badges where funcionario_id=$1 and badge_id=$2',[userId, codigo]);
-  if((has.rowCount ?? 0) > 0) return;
-  await c.query('insert into gamification_service.funcionario_badges(funcionario_id,badge_id) values($1,$2)',[userId,codigo]);
-  // Registrar histórico opcional (usando historico_xp motivo=badge com xp 0)
-  await c.query('insert into gamification_service.historico_xp(id, funcionario_id, xp_ganho, motivo, referencia_id) values (gen_random_uuid(), $1, 0, $2, $3)',[userId, `badge:${codigo}`, sourceEventId]);
+// ========== ATRIBUIR BADGE ==========
+async function atribuirBadge(
+  c: PoolClient,
+  userId: string,
+  badgeCode: string,
+  sourceEventId: string
+) {
+  // Garantir que o badge existe (criar se não existir)
+  await c.query(
+    `INSERT INTO gamification_service.badges (codigo, nome, descricao)
+     VALUES ($1, $1, 'Badge automático: ' || $1)
+     ON CONFLICT (codigo) DO NOTHING`,
+    [badgeCode]
+  );
+
+  // Verificar se usuário já possui o badge
+  const hasBadge = await c.query(
+    `SELECT 1 FROM gamification_service.funcionario_badges 
+     WHERE funcionario_id = $1 AND badge_id = $2`,
+    [userId, badgeCode]
+  );
+
+  if ((hasBadge.rowCount ?? 0) > 0) {
+    logger.debug({ userId, badgeCode }, 'badge_already_owned');
+    return;
+  }
+
+  // Atribuir badge
+  await c.query(
+    `INSERT INTO gamification_service.funcionario_badges (funcionario_id, badge_id)
+     VALUES ($1, $2)`,
+    [userId, badgeCode]
+  );
+
+  logger.info({ userId, badgeCode }, 'badge_awarded');
+
+  // Registrar no histórico (com XP zero, apenas para tracking)
+  await c.query(
+    `INSERT INTO gamification_service.historico_xp 
+     (funcionario_id, xp_ganho, motivo, referencia_id)
+     VALUES ($1, 0, $2, $3)`,
+    [userId, `badge:${badgeCode}`, `badge:${badgeCode}:${sourceEventId}`]
+  );
 }
+

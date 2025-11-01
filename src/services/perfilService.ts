@@ -37,25 +37,51 @@ export async function getOrCreatePerfil(userId:string): Promise<PerfilGamificati
   });
 }
 
-export async function adjustXp(userId:string, delta:number, sourceEventId:string){
-  if(delta === 0) return; // ignorar neutros aqui (já contabilizado em módulo final)
+export async function adjustXp(userId: string, delta: number, sourceEventId: string, motivo?: string) {
+  if (delta === 0) return; // ignorar neutros
   let newTotal = 0;
-  await withClient(async c => {
+  await withClient(async (c) => {
     // Idempotência via historico_xp.referencia_id
-    const exists = await c.query('select 1 from gamification_service.historico_xp where referencia_id=$1 limit 1',[sourceEventId]);
-    if((exists.rowCount ?? 0) > 0) return;
-    await c.query('insert into gamification_service.historico_xp(id, funcionario_id, xp_ganho, motivo, referencia_id) values(gen_random_uuid(), $1, $2, $3, $4)',[userId, delta, 'event', sourceEventId]);
-    const upd = await c.query('update user_service.funcionarios set xp_total = coalesce(xp_total,0) + $2 where id=$1 returning xp_total',[userId, delta]);
-  if((upd.rowCount ?? 0) > 0) newTotal = Number(upd.rows[0].xp_total)||0;
+    const exists = await c.query(
+      'SELECT 1 FROM gamification_service.historico_xp WHERE referencia_id = $1 LIMIT 1',
+      [sourceEventId]
+    );
+    if ((exists.rowCount ?? 0) > 0) return;
+
+    await c.query(
+      `INSERT INTO gamification_service.historico_xp 
+       (funcionario_id, xp_ganho, motivo, referencia_id) 
+       VALUES ($1, $2, $3, $4)`,
+      [userId, delta, motivo || 'event', sourceEventId]
+    );
+
+    const upd = await c.query(
+      `UPDATE user_service.funcionarios 
+       SET xp_total = COALESCE(xp_total, 0) + $2 
+       WHERE id = $1 
+       RETURNING xp_total`,
+      [userId, delta]
+    );
+    if ((upd.rowCount ?? 0) > 0) newTotal = Number(upd.rows[0].xp_total) || 0;
   });
-  if(newTotal){
+
+  if (newTotal) {
     const { nivelLabel } = nivelFromXp(newTotal);
     // Atualiza coluna nivel se mudou
-    await withClient(async c => {
-      await c.query('update user_service.funcionarios set nivel=$2 where id=$1 and nivel<>$2',[userId, nivelLabel]);
+    await withClient(async (c) => {
+      await c.query(
+        'UPDATE user_service.funcionarios SET nivel = $2 WHERE id = $1 AND nivel <> $2',
+        [userId, nivelLabel]
+      );
     });
-    const payload: XpAdjustedPayload = { userId, delta, newTotalXp: newTotal, level: nivelLabel, sourceEventId };
-    await publishEvent<XpAdjustedPayload>({ type:'xp.adjusted.v1', payload });
+    const payload: XpAdjustedPayload = {
+      userId,
+      delta,
+      newTotalXp: newTotal,
+      level: nivelLabel,
+      sourceEventId,
+    };
+    await publishEvent<XpAdjustedPayload>({ type: 'xp.adjusted.v1', payload });
   }
 }
 

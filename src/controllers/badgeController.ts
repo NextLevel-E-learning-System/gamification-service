@@ -1,6 +1,81 @@
 import { Request, Response, NextFunction } from 'express';
-import { createBadgeSchema } from '../validation/gamificationSchemas.js';
-import { createBadge, getBadge } from '../services/badgeService.js';
+import { createBadgeSchema, updateBadgeSchema } from '../validation/gamificationSchemas.js';
+import {
+  createBadge,
+  getBadge,
+  listBadges,
+  updateBadge,
+  deleteBadge,
+  getUserBadgesList,
+} from '../services/badgeService.js';
 import { HttpError } from '../utils/httpError.js';
-export async function createBadgeHandler(req:Request,res:Response,next:NextFunction){ const parsed=createBadgeSchema.safeParse(req.body); if(!parsed.success) return next(new HttpError(400,'validation_error',parsed.error.issues)); try { const r= await createBadge(parsed.data); res.status(201).json(r);} catch(e){ next(e);} }
-export async function getBadgeHandler(req:Request,res:Response,next:NextFunction){ try { const r= await getBadge(req.params.codigo); res.json(r);} catch(e){ next(e);} }
+
+// CREATE
+export async function createBadgeHandler(req: Request, res: Response, next: NextFunction) {
+  const parsed = createBadgeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new HttpError(400, 'validation_error', parsed.error.issues));
+  }
+  try {
+    const badge = await createBadge(parsed.data);
+    res.status(201).json(badge);
+  } catch (e) {
+    next(e);
+  }
+}
+
+// READ - Single
+export async function getBadgeHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const badge = await getBadge(req.params.codigo);
+    res.json(badge);
+  } catch (e) {
+    next(e);
+  }
+}
+
+// READ - List
+export async function listBadgesHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const badges = await listBadges();
+    res.json(badges);
+  } catch (e) {
+    next(e);
+  }
+}
+
+// UPDATE
+export async function updateBadgeHandler(req: Request, res: Response, next: NextFunction) {
+  const parsed = updateBadgeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return next(new HttpError(400, 'validation_error', parsed.error.issues));
+  }
+  try {
+    const badge = await updateBadge(req.params.codigo, parsed.data);
+    res.json(badge);
+  } catch (e) {
+    next(e);
+  }
+}
+
+// DELETE
+export async function deleteBadgeHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const result = await deleteBadge(req.params.codigo);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
+
+// GET USER BADGES
+export async function getUserBadgesHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const userId = req.params.userId || req.params.id;
+    const badges = await getUserBadgesList(userId);
+    res.json(badges);
+  } catch (e) {
+    next(e);
+  }
+}
+
