@@ -6,9 +6,10 @@ import {
   updateBadgeHandler,
   deleteBadgeHandler,
   getUserBadgesHandler,
+  reavaliarBadgesHandler,
 } from '../controllers/badgeController.js';
 import { getPerfilHandler, getRankingDepartamentoHandler, getRankingGlobalHandler } from '../controllers/perfilController.js';
-import { getConquistasHandler, reprocessBadgesHandler } from '../controllers/conquistasController.js';
+import { getConquistasHandler } from '../controllers/conquistasController.js';
 import { getMonthlyRankingHandler, getXpHistoryHandler } from '../controllers/rankingController.js';
 
 export const gamificationRouter = Router();
@@ -34,6 +35,5 @@ gamificationRouter.get('/users/:id/badges', getUserBadgesHandler); // Badges de 
 gamificationRouter.get('/users/:id/xp-history', getXpHistoryHandler); // Histórico de XP
 gamificationRouter.get('/conquistas', getConquistasHandler); // Minhas conquistas
 
-// ========== ADMIN - Reprocessar badges ==========
-gamificationRouter.post('/badges/auto/process', reprocessBadgesHandler); // Reprocessar badges automáticos
-
+// ========== ADMIN - Gerenciamento de Badges ==========
+gamificationRouter.post('/users/:userId/badges/reavaliar', reavaliarBadgesHandler); // Reavaliar todos os badges do usuário

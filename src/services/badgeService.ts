@@ -9,6 +9,9 @@ import {
   type UpdateBadge,
 } from '../repositories/badgeRepository.js';
 import { HttpError } from '../utils/httpError.js';
+import { withClient } from '../db.js';
+import { avaliarTodosBadges } from './badgeEvaluator.js';
+import { logger } from '../config/logger.js';
 
 // CREATE
 export async function createBadge(data: NewBadge) {
@@ -64,3 +67,32 @@ export async function getUserBadgesList(userId: string) {
   return getUserBadges(userId);
 }
 
+// REAVALIAR BADGES DO USUÁRIO (verifica todos os critérios novamente)
+export async function reavaliarBadgesUsuario(userId: string) {
+  return withClient(async (client) => {
+    const results = await avaliarTodosBadges(client, userId, `manual_reeval:${Date.now()}`);
+
+    const conquistados = results.filter((r) => r.awarded);
+    const jaConquistados = results.filter((r) => r.alreadyOwned);
+    const naoAtendidos = results.filter((r) => !r.awarded && !r.alreadyOwned);
+
+    logger.info(
+      {
+        userId,
+        novosConquistados: conquistados.length,
+        jaConquistados: jaConquistados.length,
+        naoAtendidos: naoAtendidos.length,
+      },
+      'badges_reevaluated'
+    );
+
+    return {
+      success: true,
+      message: 'Badges reavaliados com sucesso',
+      conquistados: conquistados.map((b) => b.badgeCode),
+      jaConquistados: jaConquistados.map((b) => b.badgeCode),
+      naoAtendidos: naoAtendidos.length,
+      details: results,
+    };
+  });
+}

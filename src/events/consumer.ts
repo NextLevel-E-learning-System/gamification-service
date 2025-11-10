@@ -2,7 +2,7 @@ import { connect, Channel } from 'amqplib';
 import { adjustXp } from '../services/perfilService.js';
 import { withClient } from '../db.js';
 import { logger } from '../config/logger.js';
-import type { PoolClient } from 'pg';
+import { avaliarBadgesConclusaoCurso, avaliarTodosBadges } from '../services/badgeEvaluator.js';
 
 const EXCHANGE = 'domain.events';
 let channel: Channel | null = null;
@@ -121,6 +121,19 @@ async function onModuleCompleted(evt: DomainEvent<ModuleCompletedPayload>) {
   // Registra XP do módulo
   if (xpEarned > 0) {
     await adjustXp(userId, xpEarned, evt.eventId, `modulo:${moduleId}`);
+    
+    // Avaliar badges após ganhar XP (pode desbloquear badges de XP)
+    await withClient(async (c) => {
+      const results = await avaliarTodosBadges(c, userId, evt.eventId);
+      const conquistados = results.filter(r => r.awarded);
+      
+      if (conquistados.length > 0) {
+        logger.info(
+          { userId, moduleId, badges: conquistados.map(b => b.badgeCode) },
+          'badges_awarded_after_module'
+        );
+      }
+    });
   }
 }
 
@@ -130,125 +143,42 @@ async function onCourseCompleted(evt: DomainEvent<CourseCompletedPayload>) {
 
   logger.info({ userId, courseId }, 'course_completed_evaluating_badges');
 
-  // Avaliar conquistas de badges
-  await avaliarBadges(userId, courseId, evt.eventId);
+  // Avaliar conquistas de badges usando o novo sistema
+  await withClient(async (c) => {
+    const results = await avaliarBadgesConclusaoCurso(c, userId, courseId, evt.eventId);
+    
+    const conquistados = results.filter(r => r.awarded);
+    if (conquistados.length > 0) {
+      logger.info(
+        { userId, courseId, badges: conquistados.map(b => b.badgeCode) },
+        'badges_awarded'
+      );
+    }
+  });
 }
 
 // ========== AVALIAÇÃO APROVADA ==========
 async function onAssessmentPassed(evt: DomainEvent<AssessmentPassedPayload>) {
   const { userId, score, assessmentCode } = evt.payload;
 
-  logger.info({ userId, assessmentCode, score }, 'assessment_passed_processing_xp');
+  logger.info({ userId, assessmentCode, score }, 'assessment_passed_processing');
 
   // Registra XP da avaliação
   const xpBonus = Math.round(score * 0.5); // 50% da nota como XP bônus
   if (xpBonus > 0) {
     await adjustXp(userId, xpBonus, evt.eventId, `avaliacao:${assessmentCode}`);
+    
+    // Avaliar badges após ganhar XP
+    await withClient(async (c) => {
+      const results = await avaliarTodosBadges(c, userId, evt.eventId);
+      const conquistados = results.filter(r => r.awarded);
+      
+      if (conquistados.length > 0) {
+        logger.info(
+          { userId, assessmentCode, badges: conquistados.map(b => b.badgeCode) },
+          'badges_awarded_after_assessment'
+        );
+      }
+    });
   }
-
-  // Verificar badge de primeira aprovação
-  await withClient(async (c) => {
-    const aprovacoes = await c.query(
-      `SELECT COUNT(*)::int as total 
-       FROM assessment_service.tentativas 
-       WHERE funcionario_id = $1 AND status = 'CONCLUIDO' AND nota_obtida >= (
-         SELECT nota_minima FROM assessment_service.avaliacoes WHERE codigo = avaliacao_id LIMIT 1
-       )`,
-      [userId]
-    );
-
-    if ((aprovacoes.rows[0]?.total as number) === 1) {
-      await atribuirBadge(c, userId, 'PRIMEIRA_APROVACAO', evt.eventId);
-    }
-  });
 }
-
-// ========== AVALIAR BADGES AUTOMÁTICOS ==========
-async function avaliarBadges(userId: string, courseId: string, sourceEventId: string) {
-  await withClient(async (c) => {
-    // Badge: PRIMEIRO_CURSO
-    const cursosCompletos = await c.query(
-      `SELECT COUNT(*)::int as total 
-       FROM progress_service.inscricoes 
-       WHERE funcionario_id = $1 AND status = 'CONCLUIDO'`,
-      [userId]
-    );
-
-    if ((cursosCompletos.rows[0]?.total as number) === 1) {
-      await atribuirBadge(c, userId, 'PRIMEIRO_CURSO', sourceEventId);
-    }
-
-    // Badge: MARATONISTA (5 cursos no mês atual)
-    const cursosNoMes = await c.query(
-      `SELECT COUNT(*)::int as total 
-       FROM progress_service.inscricoes 
-       WHERE funcionario_id = $1 
-         AND status = 'CONCLUIDO' 
-         AND date_trunc('month', data_conclusao) = date_trunc('month', now())`,
-      [userId]
-    );
-
-    if ((cursosNoMes.rows[0]?.total as number) === 5) {
-      await atribuirBadge(c, userId, 'MARATONISTA', sourceEventId);
-    }
-
-    // Badge: EXPERT (XP total >= 3000)
-    const xpTotal = await c.query(
-      'SELECT xp_total FROM user_service.funcionarios WHERE id = $1',
-      [userId]
-    );
-
-    const xp = Number(xpTotal.rows[0]?.xp_total) || 0;
-    if (xp >= 3000) {
-      await atribuirBadge(c, userId, 'EXPERT', sourceEventId);
-    }
-
-    logger.info({ userId, courseId, cursosCompletos: cursosCompletos.rows[0]?.total }, 'badges_evaluated');
-  });
-}
-
-// ========== ATRIBUIR BADGE ==========
-async function atribuirBadge(
-  c: PoolClient,
-  userId: string,
-  badgeCode: string,
-  sourceEventId: string
-) {
-  // Garantir que o badge existe (criar se não existir)
-  await c.query(
-    `INSERT INTO gamification_service.badges (codigo, nome, descricao)
-     VALUES ($1, $1, 'Badge automático: ' || $1)
-     ON CONFLICT (codigo) DO NOTHING`,
-    [badgeCode]
-  );
-
-  // Verificar se usuário já possui o badge
-  const hasBadge = await c.query(
-    `SELECT 1 FROM gamification_service.funcionario_badges 
-     WHERE funcionario_id = $1 AND badge_id = $2`,
-    [userId, badgeCode]
-  );
-
-  if ((hasBadge.rowCount ?? 0) > 0) {
-    logger.debug({ userId, badgeCode }, 'badge_already_owned');
-    return;
-  }
-
-  // Atribuir badge
-  await c.query(
-    `INSERT INTO gamification_service.funcionario_badges (funcionario_id, badge_id)
-     VALUES ($1, $2)`,
-    [userId, badgeCode]
-  );
-
-  logger.info({ userId, badgeCode }, 'badge_awarded');
-
-  // Registrar no histórico (com XP zero, apenas para tracking)
-  await c.query(
-    `INSERT INTO gamification_service.historico_xp 
-     (funcionario_id, xp_ganho, motivo, referencia_id)
-     VALUES ($1, 0, $2, $3)`,
-    [userId, `badge:${badgeCode}`, `badge:${badgeCode}:${sourceEventId}`]
-  );
-}
-

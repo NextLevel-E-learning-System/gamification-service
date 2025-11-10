@@ -7,6 +7,7 @@ import {
   updateBadge,
   deleteBadge,
   getUserBadgesList,
+  reavaliarBadgesUsuario,
 } from '../services/badgeService.js';
 import { HttpError } from '../utils/httpError.js';
 
@@ -79,3 +80,13 @@ export async function getUserBadgesHandler(req: Request, res: Response, next: Ne
   }
 }
 
+// REAVALIAR BADGES DO USUÁRIO
+export async function reavaliarBadgesHandler(req: Request, res: Response, next: NextFunction) {
+  try {
+    const { userId } = req.params;
+    const result = await reavaliarBadgesUsuario(userId);
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+}
