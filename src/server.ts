@@ -1,15 +1,25 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import { loadOpenApi } from './config/openapi.js';
 import { logger } from './config/logger.js';
 import { gamificationRouter } from './routes/gamificationRoutes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 export function createServer(){
-	const app=express();
-	app.use(express.json());
-	app.use(cors({origin:'*'}));
-	app.use((req,_res,next)=>{ (req as any).log=logger; next();});
+  const app = express();
+app.use(express.json());
+  const allowAll = process.env.ALLOW_ALL_ORIGINS === 'true';
+  app.use(cors({
+    origin: allowAll ? (origin, cb) => cb(null, true) : (process.env.CORS_ORIGINS || '').split(',').filter(Boolean),
+    credentials: true
+  }));
+app.use(cookieParser());
+app.use((req, _res, next) => { 
+  (req as express.Request & { log: typeof logger }).log = logger; 
+  next(); 
+});
+
 	app.get('/openapi.json', async (_req,res)=>{
 		try {
 			const spec = await loadOpenApi('Gamification Service API');
