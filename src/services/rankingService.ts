@@ -68,15 +68,3 @@ export async function rankingMensal(mes?:string, departamentoId?:string){
     }
   });
 }
-
-export async function xpHistory(userId:string, limit=50, cursor?:string){
-  return withClient(async c => {
-    const params:unknown[] = [userId];
-    let where = 'funcionario_id=$1';
-    if(cursor){ params.push(cursor); where += ` and id < $${params.length}`; }
-    const sql = `select id, xp_ganho, motivo, referencia_id from gamification_service.historico_xp
-                 where ${where} order by id desc limit ${limit}`;
-    const r = await c.query(sql, params);
-    return r.rows;
-  });
-}
