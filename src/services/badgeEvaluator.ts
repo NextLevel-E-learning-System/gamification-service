@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg'
 import { logger } from '../config/logger.js'
+import { publishEvent } from '../config/rabbitmq.js'
 
 export interface Badge {
   codigo: string
@@ -104,7 +105,7 @@ async function avaliarBadge(
   }
 
   // Atribuir badge
-  await atribuirBadge(client, userId, badge.codigo, sourceEventId)
+  await atribuirBadge(client, userId, badge.codigo, sourceEventId, badge)
 
   return {
     badgeCode: badge.codigo,
@@ -267,7 +268,8 @@ async function atribuirBadge(
   client: PoolClient,
   userId: string,
   badgeCode: string,
-  sourceEventId: string
+  sourceEventId: string,
+  badgeDetails?: Badge
 ): Promise<void> {
   // Inserir relacionamento
   await client.query(
@@ -279,8 +281,13 @@ async function atribuirBadge(
 
   logger.info({ userId, badgeCode }, 'badge_awarded')
 
-  // TODO: Publicar evento de badge conquistado
-  // await publishEvent('gamification.badge.awarded.v1', { userId, badgeCode })
+  await publishEvent('gamification.badge.awarded.v1', {
+    userId,
+    badgeCode,
+    badgeName: badgeDetails?.nome ?? badgeCode,
+    badgeDescription: badgeDetails?.descricao,
+    sourceEventId
+  })
 }
 
 /**
