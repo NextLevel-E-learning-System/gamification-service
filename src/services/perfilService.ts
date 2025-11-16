@@ -1,6 +1,5 @@
+import { publishEvent } from '../config/rabbitmq.js';
 import { withClient } from '../db.js';
-import { publishEvent } from '../events/publisher.js';
-import { XpAdjustedPayload } from '../events/contracts.js';
 
 function nivelFromXp(xp:number){
   // Faixas definidas: Iniciante: 0-999, Intermediário: 1000-2999, Avançado: 3000+
@@ -48,14 +47,14 @@ export async function adjustXp(userId: string, delta: number, sourceEventId: str
         [userId, nivelLabel]
       );
     });
-    const payload: XpAdjustedPayload = {
+    const payload = {
       userId,
       delta,
       newTotalXp: newTotal,
       level: nivelLabel,
       sourceEventId,
     };
-    await publishEvent<XpAdjustedPayload>({ type: 'xp.adjusted.v1', payload });
+    await publishEvent( 'xp.adjusted.v1', payload);
   }
 }
 
