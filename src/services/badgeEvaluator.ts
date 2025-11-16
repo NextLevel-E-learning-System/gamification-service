@@ -1,17 +1,6 @@
 import type { PoolClient } from 'pg'
 import { logger } from '../config/logger.js'
 
-/**
- * Sistema de avaliação de badges baseado em critérios dinâmicos
- * 
- * Formato dos critérios:
- * - "concluiu_n_cursos:5" -> Concluir 5 cursos
- * - "concluiu_n_areas_diferentes:5" -> Concluir cursos de 5 áreas diferentes
- * - "xp_total:3000" -> Atingir 3000 XP
- * - "cursos_mesma_categoria:3" -> 3 cursos da mesma categoria
- * - "streak_dias:7" -> 7 dias seguidos estudando
- */
-
 export interface Badge {
   codigo: string
   nome: string
