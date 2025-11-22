@@ -28,7 +28,7 @@ export function createServer() {
     try {
       const spec = await loadOpenApi('Gamification Service API')
       res.json(spec)
-    } catch (error) {
+    } catch {
       res.status(500).json({ error: 'Failed to load OpenAPI spec' })
     }
   })
