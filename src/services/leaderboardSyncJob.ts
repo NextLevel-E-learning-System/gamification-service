@@ -20,7 +20,7 @@ export async function syncLeaderboardJob(): Promise<void> {
         ORDER BY xp_total DESC
       `)
 
-      return result.rows.map((row: any) => ({
+      return result.rows.map((row: { userId: string; xp: number }) => ({
         userId: row.userId,
         xp: Number(row.xp) || 0,
       }))
@@ -30,7 +30,7 @@ export async function syncLeaderboardJob(): Promise<void> {
 
     logger.info(`✅ Sincronização concluída: ${users.length} usuários no leaderboard`)
   } catch (error) {
-    logger.error({ err }, 'gamification_error')
+    logger.error({ error }, '❌ Erro na sincronização do leaderboard')
     throw error
   }
 }
@@ -45,13 +45,13 @@ export function startLeaderboardSyncJob(): void {
 
   // Executa imediatamente na inicialização
   syncLeaderboardJob().catch(error => {
-    logger.error('Erro na sincronização inicial:', error)
+    logger.error({ error }, '❌ Erro na sincronização inicial')
   })
 
   // Depois executa periodicamente
   setInterval(() => {
     syncLeaderboardJob().catch(error => {
-      logger.error('Erro na sincronização periódica:', error)
+      logger.error({ error }, '❌ Erro na sincronização periódica')
     })
   }, intervalMs)
 
