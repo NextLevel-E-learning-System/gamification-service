@@ -1,5 +1,5 @@
 import Redis from "ioredis";
-import { logger } from "./logger";
+import { logger } from "./logger.js";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 const LEADERBOARD_KEY = process.env.REDIS_LEADERBOARD_KEY || "leaderboard:xp";
